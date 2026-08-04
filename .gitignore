@@ -1,0 +1,9 @@
+data/raw/
+data/staging/
+*.parquet
+*.db
+*.duckdb
+*.wal
+.env
+__pycache__/
+.ipynb_checkpoints/
