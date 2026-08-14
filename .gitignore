@@ -1,9 +1,27 @@
+# Raw data and generated databases
 data/raw/
 data/staging/
+data/processed/
+data/temp/
+
+# Generated outputs
+outputs/
 *.parquet
 *.db
 *.duckdb
 *.wal
-.env
-__pycache__/
+*.part
+
+# Jupyter temporary files
 .ipynb_checkpoints/
+notebooks/iframe_figures/
+notebooks/.tmp/
+
+# Python temporary files
+__pycache__/
+*.py[cod]
+
+# Environment and secrets
+.env
+.venv/
+venv/

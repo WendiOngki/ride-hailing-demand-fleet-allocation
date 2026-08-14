@@ -1,0 +1,9 @@
+check,affected_rows,decision
+schema_inconsistency,0,no_action
+invalid_timestamp,9680,remove
+invalid_zone,0,no_action
+invalid_distance,34059,remove
+invalid_duration,30,remove
+missing_critical_values,0,no_action
+potential_duplicate,440,retain_not_exact
+exact_duplicate,0,no_action
