@@ -1,266 +1,545 @@
-"""
-Ride-Hailing Demand & Fleet Allocation Analytics — Dashboard
-Reads from the project's DuckDB warehouse (nyc_taxi.db) built in notebooks 01-06.
+"""Streamlit dashboard for the ride-hailing analytics project.
 
-Run with:
-    streamlit run app.py
-
-Expected to live inside the project's /dashboard folder, one level above
-where nyc_taxi.db sits at ../data/processed/nyc_taxi.db. Adjust DB_PATH
-below if your folder structure differs.
+Run from the project root:
+    streamlit run dashboard/app.py
 """
+
+from pathlib import Path
 
 import duckdb
 import pandas as pd
+import plotly.express as px
 import streamlit as st
-import matplotlib.pyplot as plt
-import seaborn as sns
-
-DB_PATH = "../data/processed/nyc_taxi.db"
-
-st.set_page_config(page_title="Ride-Hailing Demand & Fleet Allocation", layout="wide")
 
 
-# ----------------------------------------------------------------------
-# Connection & cached data loaders
-# ----------------------------------------------------------------------
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DB_PATH = PROJECT_ROOT / 'data' / 'processed' / 'nyc_taxi.db'
+
+st.set_page_config(
+    page_title='Ride-Hailing Forecasting & Positioning',
+    page_icon='🚕',
+    layout='wide'
+)
+
 
 @st.cache_resource
 def get_connection():
-    return duckdb.connect(DB_PATH, read_only=True)
+    return duckdb.connect(str(DB_PATH), read_only=True)
 
 
-@st.cache_data
-def load_hourly_dow_heatmap():
-    con = get_connection()
-    return con.execute("""
+@st.cache_data(show_spinner=False)
+def load_historical_summary():
+    return get_connection().execute("""
         SELECT
-            EXTRACT(HOUR FROM pickup_datetime) AS hour_of_day,
-            ISODOW(pickup_datetime) AS day_of_week,
-            COUNT(*) AS total_trip
+            COUNT(*) AS completed_trips,
+            COUNT(DISTINCT CAST(pickup_datetime AS DATE)) AS number_of_days,
+            COUNT(DISTINCT PULocationID) AS pickup_zones,
+            MIN(pickup_datetime) AS min_pickup,
+            MAX(pickup_datetime) AS max_pickup
         FROM fact_trip
-        GROUP BY hour_of_day, day_of_week
+    """).df()
+
+
+@st.cache_data(show_spinner=False)
+def load_daily_trend():
+    return get_connection().execute("""
+        SELECT
+            CAST(pickup_datetime AS DATE) AS demand_date,
+            COUNT(*) AS completed_trips
+        FROM fact_trip
+        GROUP BY demand_date
+        ORDER BY demand_date
+    """).df()
+
+
+@st.cache_data(show_spinner=False)
+def load_weekday_weekend():
+    return get_connection().execute("""
+        SELECT
+            CASE
+                WHEN ISODOW(pickup_datetime) IN (6, 7) THEN 'Weekend'
+                ELSE 'Weekday'
+            END AS day_type,
+            COUNT(DISTINCT CAST(pickup_datetime AS DATE)) AS number_of_days,
+            COUNT(*) * 1.0
+                / COUNT(DISTINCT CAST(pickup_datetime AS DATE))
+                AS avg_completed_trips
+        FROM fact_trip
+        GROUP BY day_type
+        ORDER BY day_type
+    """).df()
+
+
+@st.cache_data(show_spinner=False)
+def load_hourly_heatmap():
+    return get_connection().execute("""
+        SELECT
+            ISODOW(pickup_datetime) AS day_of_week,
+            EXTRACT(HOUR FROM pickup_datetime)::INTEGER AS hour_of_day,
+            COUNT(*) * 1.0
+                / COUNT(DISTINCT CAST(pickup_datetime AS DATE))
+                AS avg_completed_trips
+        FROM fact_trip
+        GROUP BY day_of_week, hour_of_day
         ORDER BY day_of_week, hour_of_day
     """).df()
 
 
-@st.cache_data
-def load_borough_list():
-    con = get_connection()
-    return con.execute("""
-        SELECT DISTINCT Borough FROM dim_zone
-        WHERE Borough IS NOT NULL AND Borough != 'N/A'
-        ORDER BY Borough
-    """).df()["Borough"].tolist()
-
-
-@st.cache_data
-def load_daily_trend():
-    con = get_connection()
-    return con.execute("""
-        SELECT
-            DATE_TRUNC('day', pickup_datetime) AS trip_date,
-            COUNT(*) AS total_trip
-        FROM fact_trip
-        GROUP BY trip_date
-        ORDER BY trip_date
+@st.cache_data(show_spinner=False)
+def load_model_evaluation():
+    return get_connection().execute("""
+        SELECT *
+        FROM forecast_model_evaluation
     """).df()
 
 
-@st.cache_data
-def load_weekday_weekend():
-    con = get_connection()
-    return con.execute("""
-        SELECT
-            CASE WHEN ISODOW(pickup_datetime) IN (6, 7) THEN 'Weekend' ELSE 'Weekday' END AS day_type,
-            COUNT(*) * 1.0 / COUNT(DISTINCT DATE_TRUNC('day', pickup_datetime)) AS avg_trip_per_day
-        FROM fact_trip
-        GROUP BY day_type
+@st.cache_data(show_spinner=False)
+def load_tier_evaluation():
+    return get_connection().execute("""
+        SELECT *
+        FROM forecast_test_tier_evaluation
+        ORDER BY CASE volume_tier
+            WHEN 'Low' THEN 1
+            WHEN 'Medium' THEN 2
+            WHEN 'High' THEN 3
+        END
     """).df()
 
 
-@st.cache_data
-def load_forecast_output():
-    con = get_connection()
-    return con.execute("SELECT * FROM forecast_output").df()
+@st.cache_data(show_spinner=False)
+def load_forecast():
+    return get_connection().execute("""
+        SELECT *
+        FROM forecast_output
+        ORDER BY forecast_time, LocationID
+    """).df()
 
 
-@st.cache_data
-def load_allocation_recommendation():
-    con = get_connection()
-    return con.execute("SELECT * FROM fleet_allocation_recommendation").df()
+@st.cache_data(show_spinner=False)
+def load_positioning():
+    return get_connection().execute("""
+        SELECT *
+        FROM fleet_allocation_recommendation
+        ORDER BY forecast_time, positioning_rank
+    """).df()
 
 
-def calculate_wape(y_true, y_pred):
-    return (y_true - y_pred).abs().sum() / y_true.abs().sum() * 100
+def format_metric_table(dataframe):
+    result = dataframe.copy()
+    numeric_columns = result.select_dtypes(include='number').columns
+    result[numeric_columns] = result[numeric_columns].round(2)
+    return result
 
 
-def calculate_mape(y_true, y_pred):
-    mask = y_true != 0
-    return ((y_true[mask] - y_pred[mask]).abs() / y_true[mask].abs()).mean() * 100
-
-
-# ----------------------------------------------------------------------
-# Sidebar navigation
-# ----------------------------------------------------------------------
-
-st.sidebar.title("Ride-Hailing Analytics")
+st.sidebar.title('Ride-Hailing Analytics')
 page = st.sidebar.radio(
-    "Go to",
-    ["Demand Heatmap", "Trend and Seasonality", "Forecast vs Actual", "Fleet Allocation Recommendation"]
+    'Navigation',
+    [
+        'Project Overview',
+        'Historical Patterns',
+        'Model Evaluation',
+        '7-Day Forecast',
+        'Positioning Guidance'
+    ]
 )
 
-st.sidebar.markdown("---")
+st.sidebar.divider()
 st.sidebar.caption(
-    "Data: NYC TLC HVFHS trip records, Jan-Dec 2024. "
-    "Completed trips only — does not capture unmatched/cancelled demand. "
-    "See project README for full limitations."
+    'NYC TLC HVFHS completed trips, January–December 2024. '
+    'The output estimates completed-trip activity, not total latent demand.'
 )
 
-
-# ----------------------------------------------------------------------
-# Page 1: Demand Heatmap
-# ----------------------------------------------------------------------
-
-if page == "Demand Heatmap":
-    st.title("Demand Heatmap: Zone x Hour x Day")
-    st.caption("Trip volume by hour of day and day of week, across all zones (2024).")
-
-    df_heat = load_hourly_dow_heatmap()
-
-    dow_labels = {1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 7: "Sun"}
-    df_heat["day_label"] = df_heat["day_of_week"].map(dow_labels)
-
-    pivot = df_heat.pivot(index="day_label", columns="hour_of_day", values="total_trip")
-    pivot = pivot.reindex(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
-
-    fig, ax = plt.subplots(figsize=(14, 5))
-    sns.heatmap(pivot, cmap="Blues", ax=ax, cbar_kws={"label": "Total Trips"})
-    ax.set_xlabel("Hour of Day")
-    ax.set_ylabel("")
-    st.pyplot(fig)
-
-    st.markdown(
-        "**Reading this chart:** darker cells indicate higher trip volume. "
-        "Expect the darkest band around 17:00-19:00 on weekdays, and a broader "
-        "elevated band on weekend evenings/nights."
-    )
+if not DB_PATH.exists():
+    st.error(f'Database not found: {DB_PATH}')
+    st.info('Run notebooks 01–06 before starting the dashboard.')
+    st.stop()
 
 
-# ----------------------------------------------------------------------
-# Page 2: Trend and Seasonality
-# ----------------------------------------------------------------------
-
-elif page == "Trend and Seasonality":
-    st.title("Trend and Seasonality")
-
-    df_daily = load_daily_trend()
-
-    st.subheader("Daily Trip Volume Over 2024")
-    fig, ax = plt.subplots(figsize=(14, 4))
-    ax.plot(df_daily["trip_date"], df_daily["total_trip"], color="#37474F", linewidth=1)
-    ax.set_xlabel("Date")
-    ax.set_ylabel("Total Trips")
-    st.pyplot(fig)
-
-    st.subheader("Weekday vs Weekend")
-    df_wk = load_weekday_weekend()
-    col1, col2 = st.columns(2)
-    for col, row in zip([col1, col2], df_wk.itertuples()):
-        col.metric(row.day_type, f"{row.avg_trip_per_day:,.0f} trips/day")
-
+if page == 'Project Overview':
+    st.title('Ride-Hailing Forecasting & Demand-Based Positioning')
     st.caption(
-        "Weekend average includes Saturday and Sunday; weekday average includes Monday-Friday. "
-        "See notebook 04 for zone-level volatility and supply-demand proxy analysis."
+        'Historical completed-trip analysis, holiday-aware forecasting, '
+        'and relative pickup-zone positioning guidance.'
+    )
+
+    with st.spinner('Loading project summary...'):
+        summary = load_historical_summary().iloc[0]
+        forecast = load_forecast()
+        positioning = load_positioning()
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric('Clean completed trips', f'{summary.completed_trips:,.0f}')
+    col2.metric('Historical days', f'{summary.number_of_days:,.0f}')
+    col3.metric('Forecast zone-hours', f'{len(forecast):,}')
+    col4.metric('Actionable zones', f'{forecast["LocationID"].nunique():,}')
+
+    st.subheader('Pipeline')
+    st.markdown(
+        '1. Acquire and verify 2024 NYC TLC trip files.  '
+        '\n2. Audit timestamps, distance, duration, zones, and duplicates.  '
+        '\n3. Build the DuckDB analytical warehouse.  '
+        '\n4. Describe temporal and geographic completed-trip patterns.  '
+        '\n5. Select and test the holiday-aware forecasting model.  '
+        '\n6. Convert the forecast into relative positioning guidance.'
+    )
+
+    st.subheader('How to interpret the output')
+    left, right = st.columns(2)
+    left.success(
+        '**Appropriate use:** compare expected completed-trip workload across '
+        'zones within the same forecast hour.'
+    )
+    right.warning(
+        '**Not supported:** exact driver counts, available fleet capacity, '
+        'dispatch instructions, or measurement of unmet demand.'
+    )
+
+    review_share = (
+        positioning['review_flag'].value_counts(normalize=True).mul(100)
+    )
+    st.caption(
+        f'Standard-use positioning rows: '
+        f'{review_share.get("Standard use", 0):.2f}% · '
+        f'Use-with-caution rows: '
+        f'{review_share.get("Use with caution", 0):.2f}% · '
+        f'Manual-review rows: '
+        f'{review_share.get("Manual review recommended", 0):.2f}%'
     )
 
 
-# ----------------------------------------------------------------------
-# Page 3: Forecast vs Actual
-# ----------------------------------------------------------------------
+elif page == 'Historical Patterns':
+    st.title('Historical Completed-Trip Patterns')
+    st.caption('Observed activity from the cleaned 2024 trip records.')
 
-elif page == "Forecast vs Actual":
-    st.title("Forecast vs Actual")
-    st.caption("Model performance on the held-out test period (Nov 7 - Dec 31, 2024).")
+    with st.spinner('Aggregating historical patterns...'):
+        daily = load_daily_trend()
+        day_type = load_weekday_weekend()
+        hourly = load_hourly_heatmap()
 
-    df_fc = load_forecast_output()
+    weekday = day_type.loc[
+        day_type['day_type'].eq('Weekday'), 'avg_completed_trips'
+    ].iloc[0]
+    weekend = day_type.loc[
+        day_type['day_type'].eq('Weekend'), 'avg_completed_trips'
+    ].iloc[0]
 
-    wape = calculate_wape(df_fc["total_trip"], df_fc["model_pred"])
-    mape = calculate_mape(df_fc["total_trip"], df_fc["model_pred"])
+    col1, col2, col3 = st.columns(3)
+    col1.metric('Weekday average', f'{weekday:,.0f} trips/day')
+    col2.metric('Weekend average', f'{weekend:,.0f} trips/day')
+    col3.metric('Weekend difference', f'{(weekend / weekday - 1) * 100:.1f}%')
+
+    daily_chart = px.line(
+        daily,
+        x='demand_date',
+        y='completed_trips',
+        title='Daily Completed Trips in 2024',
+        labels={
+            'demand_date': 'Date',
+            'completed_trips': 'Completed Trips'
+        }
+    )
+    daily_chart.update_layout(hovermode='x unified')
+    st.plotly_chart(daily_chart, use_container_width=True)
+
+    day_labels = {
+        1: 'Monday', 2: 'Tuesday', 3: 'Wednesday',
+        4: 'Thursday', 5: 'Friday', 6: 'Saturday', 7: 'Sunday'
+    }
+    hourly['day_name'] = hourly['day_of_week'].map(day_labels)
+    heatmap_data = hourly.pivot(
+        index='day_name',
+        columns='hour_of_day',
+        values='avg_completed_trips'
+    ).reindex(list(day_labels.values()))
+
+    heatmap = px.imshow(
+        heatmap_data,
+        aspect='auto',
+        color_continuous_scale='Blues',
+        title='Average Completed Trips by Day and Hour',
+        labels={
+            'x': 'Hour of Day',
+            'y': 'Day of Week',
+            'color': 'Average Trips'
+        }
+    )
+    st.plotly_chart(heatmap, use_container_width=True)
+
+
+elif page == 'Model Evaluation':
+    st.title('Forecast Model Evaluation')
+    st.caption(
+        'Models were selected on November 2024 validation data. '
+        'December 2024 was retained for the final test.'
+    )
+
+    evaluation = load_model_evaluation()
+    tier_evaluation = load_tier_evaluation()
+
+    validation = evaluation[
+        evaluation['evaluation_period'].eq('Validation')
+    ].sort_values('WAPE (%)')
+    test = evaluation[
+        evaluation['evaluation_period'].eq('Test')
+    ].iloc[0]
+
+    st.success(
+        f'Selected model: **{test["model"]}** — lowest validation WAPE.'
+    )
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric('Test WAPE', f'{test["WAPE (%)"]:.2f}%')
+    col2.metric('Test MAE', f'{test["MAE"]:.2f}')
+    col3.metric('Test MAPE nonzero', f'{test["MAPE nonzero (%)"]:.2f}%')
+    col4.metric('Test bias', f'{test["Bias (%)"]:.2f}%')
+
+    validation_chart = px.bar(
+        validation,
+        x='WAPE (%)',
+        y='model',
+        orientation='h',
+        title='Validation WAPE by Candidate Model',
+        labels={'model': 'Model'},
+        text_auto='.2f'
+    )
+    validation_chart.update_layout(yaxis={'categoryorder': 'total descending'})
+    st.plotly_chart(validation_chart, use_container_width=True)
 
     col1, col2 = st.columns(2)
-    col1.metric("WAPE (test set)", f"{wape:.2f}%")
-    col2.metric("MAPE (test set)", f"{mape:.2f}%")
+    with col1:
+        st.subheader('Validation and test metrics')
+        st.dataframe(
+            format_metric_table(evaluation),
+            hide_index=True,
+            use_container_width=True
+        )
+    with col2:
+        st.subheader('Test performance by volume tier')
+        st.dataframe(
+            format_metric_table(tier_evaluation),
+            hide_index=True,
+            use_container_width=True
+        )
 
-    st.subheader("Actual vs Forecast, Aggregated by Date")
-    df_daily_fc = df_fc.groupby("trip_date")[["total_trip", "model_pred"]].sum().reset_index()
-
-    fig, ax = plt.subplots(figsize=(14, 4))
-    ax.plot(df_daily_fc["trip_date"], df_daily_fc["total_trip"], label="Actual", color="#37474F")
-    ax.plot(df_daily_fc["trip_date"], df_daily_fc["model_pred"], label="Forecast", color="#B0BEC5", linestyle="--")
-    ax.set_xlabel("Date")
-    ax.set_ylabel("Total Trips")
-    ax.legend()
-    st.pyplot(fig)
-
-    st.subheader("Performance by Zone Volume Tier")
-    tier_rows = []
-    for tier in ["Low", "Medium", "High"]:
-        subset = df_fc[df_fc["volume_tier"] == tier]
-        tier_rows.append({
-            "Tier": tier,
-            "WAPE (%)": round(calculate_wape(subset["total_trip"], subset["model_pred"]), 2),
-            "MAPE (%)": round(calculate_mape(subset["total_trip"], subset["model_pred"]), 2),
-        })
-    st.table(pd.DataFrame(tier_rows))
-
-    st.markdown(
-        "**Note:** the model outperforms a simple historical-average baseline overall and "
-        "most clearly in high-volume zones. In low-volume zones, performance is close to "
-        "baseline — see model card for why this is an expected limitation, not a bug."
+    st.info(
+        'Negative test bias means the model underpredicted completed-trip volume '
+        'overall. Low-volume zones have greater relative uncertainty.'
     )
 
 
-# ----------------------------------------------------------------------
-# Page 4: Fleet Allocation Recommendation
-# ----------------------------------------------------------------------
-
-elif page == "Fleet Allocation Recommendation":
-    st.title("Fleet Allocation Recommendation")
+elif page == '7-Day Forecast':
+    st.title('Completed-Trip Forecast: 1–7 January 2025')
     st.caption(
-        "Relative allocation guidance per zone-hour, based on forecasted demand vs. "
-        "historical average capacity. Not an absolute driver count."
+        'Holiday-Aware Historical Baseline forecast for 262 actionable '
+        'pickup zones and 168 consecutive hours.'
     )
 
-    df_alloc = load_allocation_recommendation()
+    forecast = load_forecast()
+    forecast['forecast_time'] = pd.to_datetime(forecast['forecast_time'])
+    forecast['forecast_date'] = pd.to_datetime(
+        forecast['forecast_date']
+    ).dt.date
 
-    boroughs = ["All"] + sorted(df_alloc["Borough"].dropna().unique().tolist())
-    selected_borough = st.selectbox("Filter by Borough", boroughs)
+    borough_options = ['All'] + sorted(
+        forecast['pickup_borough'].dropna().unique().tolist()
+    )
+    selected_borough = st.selectbox('Pickup borough', borough_options)
 
-    recommendations = ["All"] + sorted(df_alloc["allocation_recommendation"].dropna().unique().tolist())
-    selected_rec = st.selectbox("Filter by Recommendation", recommendations)
+    filtered = forecast.copy()
+    if selected_borough != 'All':
+        filtered = filtered[
+            filtered['pickup_borough'].eq(selected_borough)
+        ]
 
-    df_filtered = df_alloc.copy()
-    if selected_borough != "All":
-        df_filtered = df_filtered[df_filtered["Borough"] == selected_borough]
-    if selected_rec != "All":
-        df_filtered = df_filtered[df_filtered["allocation_recommendation"] == selected_rec]
+    hourly_forecast = (
+        filtered.groupby('forecast_time', as_index=False)
+        .agg(forecast_completed_trips=('forecast_completed_trips', 'sum'))
+    )
+    peak = hourly_forecast.loc[
+        hourly_forecast['forecast_completed_trips'].idxmax()
+    ]
 
-    st.subheader(f"Zone-Hour Recommendations ({len(df_filtered):,} rows)")
+    col1, col2, col3 = st.columns(3)
+    col1.metric(
+        'Forecast completed trips',
+        f'{filtered["forecast_completed_trips"].sum():,.0f}'
+    )
+    col2.metric('Selected zones', f'{filtered["LocationID"].nunique():,}')
+    col3.metric(
+        'Peak forecast hour',
+        pd.Timestamp(peak['forecast_time']).strftime('%d %b, %H:%M')
+    )
+
+    forecast_chart = px.line(
+        hourly_forecast,
+        x='forecast_time',
+        y='forecast_completed_trips',
+        title='Hourly Forecasted Completed Trips',
+        labels={
+            'forecast_time': 'Forecast Time',
+            'forecast_completed_trips': 'Forecast Completed Trips'
+        }
+    )
+    forecast_chart.update_layout(hovermode='x unified')
+    st.plotly_chart(forecast_chart, use_container_width=True)
+
+    selected_time = st.selectbox(
+        'Inspect one forecast hour',
+        sorted(filtered['forecast_time'].unique()),
+        format_func=lambda value: pd.Timestamp(value).strftime(
+            '%A, %d %B %Y — %H:%M'
+        )
+    )
+    zone_forecast = (
+        filtered[filtered['forecast_time'].eq(selected_time)]
+        .sort_values('forecast_completed_trips', ascending=False)
+    )
+
     st.dataframe(
-        df_filtered[[
-            "Zone", "Borough", "trip_date", "hour_of_day", "time_segment",
-            "forecast_trip", "forecast_lower", "forecast_upper",
-            "allocation_ratio_pct", "allocation_recommendation"
-        ]].sort_values("allocation_ratio_pct", ascending=False),
+        zone_forecast[[
+            'pickup_zone', 'pickup_borough', 'volume_tier',
+            'is_holiday', 'forecast_completed_trips', 'model'
+        ]].round({'forecast_completed_trips': 2}),
+        hide_index=True,
         use_container_width=True,
-        height=400,
+        height=420
     )
 
-    st.markdown(
-        "**Limitations:** allocation ratios are relative to each zone-hour's historical "
-        "average, not absolute driver counts (this dataset has no driver-count data). "
-        "Uncertainty intervals (forecast_lower-forecast_upper) widen for low-volume zones. "
-        "This output is advisory and requires human review before operational use — "
-        "see project README and model card for full limitations."
+
+elif page == 'Positioning Guidance':
+    st.title('Relative Demand-Based Positioning Guidance')
+    st.caption(
+        'Recommended positioning shares are relative completed-trip workload '
+        'shares within each forecast hour—not vehicle counts or fleet capacity.'
+    )
+
+    positioning = load_positioning()
+    positioning['forecast_time'] = pd.to_datetime(
+        positioning['forecast_time']
+    )
+    positioning['forecast_date'] = pd.to_datetime(
+        positioning['forecast_date']
+    ).dt.date
+
+    date_options = sorted(positioning['forecast_date'].unique())
+    selected_date = st.selectbox('Forecast date', date_options)
+    selected_hour = st.slider('Hour of day', 0, 23, 18)
+    selected_time = pd.Timestamp(selected_date) + pd.Timedelta(
+        hours=selected_hour
+    )
+
+    full_hour = positioning[
+        positioning['forecast_time'].eq(selected_time)
+    ].copy()
+
+    if full_hour.empty:
+        st.warning('No positioning data is available for the selected hour.')
+        st.stop()
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric(
+        'Forecast completed trips',
+        f'{full_hour["forecast_completed_trips"].sum():,.0f}'
+    )
+    col2.metric(
+        'Forecast workload',
+        f'{full_hour["forecasted_completed_trip_hours"].sum():,.1f} hours'
+    )
+    col3.metric(
+        'Highest zone share',
+        f'{full_hour["recommended_positioning_share_pct"].max():.2f}%'
+    )
+    col4.metric(
+        'Rows requiring caution',
+        f'{full_hour["review_flag"].ne("Standard use").sum():,}'
+    )
+
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    borough_options = ['All'] + sorted(
+        full_hour['pickup_borough'].dropna().unique().tolist()
+    )
+    priority_options = ['All', 'High', 'Medium', 'Standard']
+    review_options = ['All'] + sorted(
+        full_hour['review_flag'].dropna().unique().tolist()
+    )
+
+    selected_borough = filter_col1.selectbox(
+        'Pickup borough', borough_options, key='positioning_borough'
+    )
+    selected_priority = filter_col2.selectbox(
+        'Positioning priority', priority_options
+    )
+    selected_review = filter_col3.selectbox('Review flag', review_options)
+
+    filtered = full_hour.copy()
+    if selected_borough != 'All':
+        filtered = filtered[
+            filtered['pickup_borough'].eq(selected_borough)
+        ]
+    if selected_priority != 'All':
+        filtered = filtered[
+            filtered['positioning_priority'].eq(selected_priority)
+        ]
+    if selected_review != 'All':
+        filtered = filtered[
+            filtered['review_flag'].eq(selected_review)
+        ]
+
+    show_all = st.checkbox('Visualize all matching zones', value=False)
+    chart_data = filtered if show_all else filtered.head(30)
+
+    priority_colors = {
+        'High': '#D95F02',
+        'Medium': '#E6AB02',
+        'Standard': '#7570B3'
+    }
+    positioning_chart = px.bar(
+        chart_data,
+        x='positioning_rank',
+        y='recommended_positioning_share_pct',
+        color='positioning_priority',
+        hover_name='pickup_zone',
+        hover_data={
+            'pickup_borough': True,
+            'forecast_completed_trips': ':.2f',
+            'forecasted_completed_trip_hours': ':.2f',
+            'recommended_positioning_share_pct': ':.3f',
+            'positioning_rank': True
+        },
+        color_discrete_map=priority_colors,
+        category_orders={
+            'positioning_priority': ['High', 'Medium', 'Standard']
+        },
+        title=f'Positioning Share — {selected_time:%d %B %Y, %H:%M}',
+        labels={
+            'positioning_rank': 'Zone Positioning Rank',
+            'recommended_positioning_share_pct': 'Positioning Share (%)',
+            'positioning_priority': 'Priority'
+        }
+    )
+    positioning_chart.update_layout(bargap=0)
+    st.plotly_chart(positioning_chart, use_container_width=True)
+
+    st.dataframe(
+        filtered[[
+            'positioning_rank', 'pickup_zone', 'pickup_borough',
+            'forecast_completed_trips', 'historical_avg_trip_minutes',
+            'forecasted_completed_trip_hours',
+            'recommended_positioning_share_pct', 'positioning_priority',
+            'forecast_reliability', 'duration_reliability', 'review_flag'
+        ]].round({
+            'forecast_completed_trips': 2,
+            'historical_avg_trip_minutes': 2,
+            'forecasted_completed_trip_hours': 2,
+            'recommended_positioning_share_pct': 3
+        }),
+        hide_index=True,
+        use_container_width=True,
+        height=450
+    )
+
+    st.warning(
+        'Use these shares as directional planning evidence only. The project '
+        'does not observe active drivers, available vehicles, repositioning '
+        'time, repositioning cost, or unmet passenger requests.'
     )

@@ -16,4 +16,4 @@ ipykernel
 jupyterlab
 
 # Dashboard
-streamlit
+streamlit==1.61.1
