@@ -1,98 +1,104 @@
 # Executive Memo — Ride-Hailing Completed-Trip Forecasting & Positioning
 
-**To:** Operations Leadership<br>
-**From:** Analytics Team<br>
-**Subject:** Where and when completed-trip activity concentrates, and how the result can support relative fleet positioning<br>
-**Analysis period:** January–December 2024<br>
-**Forecast period:** 1–7 January 2025
+| | |
+|---|---|
+| To | Operations Leadership |
+| From | Analytics Team |
+| Historical period | January–December 2024 |
+| Forecast period | 1–7 January 2025 |
+| Subject | Completed-trip patterns, forecast performance, and relative positioning guidance |
 
-## Executive decision
+## Decision Summary
 
-Use the project output as an **hourly relative positioning signal**: it indicates which pickup zones should receive a larger or smaller share of operational attention based on forecasted completed-trip workload.
+Use the project output as an **hourly relative positioning signal**. It identifies which pickup zones account for larger shares of forecasted completed-trip workload within the same hour.
 
-Do **not** interpret the output as an exact vehicle requirement. The source data does not contain active-driver counts, available driver-hours, vehicles by zone, repositioning time or cost, or other supply constraints.
+Do not treat the output as an exact vehicle requirement. The public data does not contain active-driver counts, available driver-hours, vehicles by zone, repositioning time/cost, or operational supply constraints.
 
-## Business question
+## What the Historical Data Shows
 
-The analysis addresses three questions:
+The cleaned warehouse contains **239.43 million completed trips** from 2024.
 
-1. Where and when does completed-trip activity concentrate?
-2. How accurately can zone-hour completed trips be forecast from 2024 history?
-3. How can the forecast be converted into transparent, relative positioning priorities without overstating the available data?
+- Average daily activity is approximately **630,214 trips on weekdays** and **714,525 on weekends**.
+- The average peak hour is **18:00**, with approximately **38,609 trips per day** at that hour. The lowest is **03:00**, with approximately **9,740**.
+- Manhattan contributes **38.87%** of recorded pickups, followed by Brooklyn at 26.38%, Queens at 20.92%, and the Bronx at 12.35%.
+- LaGuardia Airport and JFK Airport are the busiest individual pickup zones by completed-trip count.
+- Daily stability differs by zone. Among the busiest zones, East Village and Bushwick South vary more from day to day than East Chelsea and Times Square.
+- The average completed trip is **5.08 miles** and **20.13 minutes**.
 
-## What the 2024 data shows
+These findings show strong recurring geographic, hourly, and weekday patterns, but also meaningful differences in zone-level volatility.
 
-- The cleaned dataset contains **239.43 million completed trips** across 262 actionable pickup zones.
-- Average daily activity is approximately **714,525 trips on weekends** and **630,214 on weekdays**, making weekends about **13.4% higher** on average.
-- The busiest average hour is **18:00**, with approximately **38,609 trips per day** at that hour. The lowest is **03:00**, with approximately **9,740**.
-- **Manhattan accounts for 38.87%** of recorded pickups, followed by Brooklyn at 26.38%, Queens at 20.92%, and the Bronx at 12.35%.
-- LaGuardia Airport and JFK Airport are the two busiest individual pickup zones. Other major activity centres include the East Village, Crown Heights North, Times Square, Midtown Center, and TriBeCa/Civic Center.
-- High volume does not always mean high instability. East Chelsea and Times Square combine high activity with relatively stable daily patterns, while East Village and Bushwick South show greater day-to-day variability.
+## Forecasting Result
 
-These results indicate a strong recurring combination of zone, hour, and day-of-week patterns, but the variability is not uniform across the city.
+Three models were compared on November 2024 validation data:
 
-## Forecasting result
+| Candidate | Validation WAPE | Validation bias |
+|---|---:|---:|
+| **Holiday-Aware Historical Baseline** | **15.29%** | **-1.71%** |
+| HistGradientBoosting | 16.61% | 4.15% |
+| Linear Regression | 18.37% | -4.43% |
 
-Three approaches were compared using a chronological split:
-
-| Candidate                             | Validation WAPE | Validation bias |
-| ------------------------------------- | --------------: | --------------: |
-| **Holiday-Aware Historical Baseline** |      **15.29%** |      **-1.71%** |
-| HistGradientBoosting                  |          16.61% |           4.15% |
-| Linear Regression                     |          18.37% |          -4.43% |
-
-The **Holiday-Aware Historical Baseline** was selected because it produced the lowest validation error. It forecasts regular dates from the historical average for the same pickup zone, hour, and day of week. Federal holidays use a separate pooled holiday pattern.
-
-This result is operationally useful: a transparent historical model performed better than the more complex alternatives. Greater model complexity was therefore not justified by the observed validation performance.
+The Holiday-Aware Historical Baseline was selected because it produced the lowest validation WAPE. It uses recurring zone-hour-weekday patterns for regular dates and a pooled zone-hour pattern for US federal holidays.
 
 On the untouched December test period, the selected model achieved:
 
 - **WAPE:** 19.61%;
-- **MAE:** 21.19 trips per zone-hour; and
+- **MAE:** 21.19 completed trips per zone-hour; and
 - **bias:** -4.99%, indicating overall underprediction.
 
-The weaker December result shows that year-end activity is more difficult to represent with only one year of historical data. Forecasts should therefore be treated as estimates with measurable uncertainty, not exact future counts.
+December errors were higher than November errors, particularly around the end-of-year period. The forecast should therefore be treated as a planning estimate rather than an exact future count.
 
-## Positioning recommendation
+## Positioning Guidance
 
-The final forecast contains **44,016 zone-hour rows** for 1–7 January 2025: 168 hours across 262 zones.
+The final forecast contains **44,016 rows** covering 168 hours and 262 zones from 1–7 January 2025. New Year's Day uses the pooled holiday forecasting pattern.
 
-For every zone-hour, forecasted completed trips are converted into a completed-trip workload proxy using historical average trip duration. Each zone's workload is then divided by the total workload forecast for the same hour.
+For each zone-hour, notebook 06:
 
-The resulting percentage answers:
+1. multiplies forecasted completed trips by historical average trip duration;
+2. estimates completed-trip workload hours;
+3. calculates each zone's share of the same hour's total workload;
+4. ranks all 262 zones; and
+5. assigns High, Medium, or Standard positioning priority.
 
-> Of all forecasted completed-trip workload in this hour, what relative share is associated with this pickup zone?
+Every forecast hour contains 262 zones, and the relative positioning shares sum to 100%.
 
-Zones are labelled **High**, **Medium**, or **Standard** positioning priority based on cumulative workload share. The accompanying reliability and review flags identify results that require greater caution because of forecast error, sparse demand, broader duration fallbacks, or holiday conditions.
+Across the complete seven-day output:
 
-Recommended operational use:
+| Review flag | Rows | Share |
+|---|---:|---:|
+| Standard use | 25,056 | 56.92% |
+| Use with caution | 18,624 | 42.31% |
+| Manual review recommended | 336 | 0.76% |
 
-- use High-priority zones as the first locations to examine for additional positioning attention;
-- use Medium-priority zones as the second layer of coverage;
-- retain minimum service awareness in Standard-priority and low-volume zones;
-- compare recommendations with live conditions and local operational knowledge; and
-- manually review holiday, low-reliability, and fallback-based recommendations.
+The review flags reflect forecast-volume-tier reliability, the specificity of the historical-duration estimate, and holiday status. New Year's Day is marked for cautious use because the holiday-aware model still relies on limited pooled holiday history.
 
-## Important interpretation limits
+## Recommended Use
 
-1. **Completed trips are not total passenger demand.** Cancelled, rejected, unmatched, and unobserved requests are absent.
-2. **The recommendation is relative, not absolute.** A 2% positioning share does not mean that exactly 2% of all active vehicles must be sent to that zone.
-3. **No direct supply data is available.** The analysis cannot measure spare capacity, driver availability, or whether repositioning is feasible.
-4. **External demand drivers are missing.** Weather, events, airport schedules, promotions, pricing, traffic, and transit disruption are not included.
-5. **Holiday evidence is limited.** Only one year is available, so federal holidays are pooled rather than modelled individually.
-6. **The workflow is analytical, not real time.** It must be refreshed and revalidated before operational deployment.
+- Review High-priority zones first when considering where operational attention may be needed.
+- Use Medium-priority zones as the next coverage layer.
+- Preserve service awareness in Standard and lower-volume zones rather than treating low forecast volume as permission to remove service.
+- Give additional attention to low-volume zones, broader duration fallbacks, and holiday/event periods.
+- Compare the recommendation with live supply, traffic, events, airport conditions, and local operational knowledge.
 
-## Recommended next steps
+## What the Analysis Cannot Determine
 
-1. Use the current output as a planning and portfolio prototype, not an automated dispatch rule.
-2. Track WAPE and bias by week, demand tier, borough, and holiday status.
-3. Add multiple years of trip history to improve holiday and seasonal estimation.
-4. Add weather, event, airport, traffic, and transit-disruption data where available.
-5. Obtain operational supply inputs—active drivers, available driver-hours, vehicles by zone, and repositioning time/cost—before developing a true fleet-capacity or optimization model.
-6. Include minimum geographic-service constraints so that low-volume communities are not automatically deprioritized.
+1. **Total passenger demand:** only completed trips are observed.
+2. **Unmet demand:** cancelled, rejected, unmatched, and abandoned requests are not fully represented.
+3. **Exact vehicle requirements:** no fleet-size or active-driver information is available.
+4. **Repositioning feasibility:** travel time, distance, and cost between positioning zones are not optimized.
+5. **Why demand changes:** weather, events, pricing, promotions, traffic, and transit disruption are absent.
+6. **Production readiness:** the workflow is notebook-based and does not include live monitoring or automated dispatch integration.
 
-## Bottom line
+## Recommended Next Steps
 
-The project provides a defensible forecast of **completed-trip activity** and a transparent way to rank **relative zone-positioning priorities**. It supports better conversations about where and when operational attention may be needed. It does not yet support exact staffing numbers, claims about unmet demand, or fully optimized fleet allocation.
+1. Re-run notebooks 01–06 from fresh kernels to confirm end-to-end reproducibility.
+2. Add additional years of history to improve seasonal and holiday estimation.
+3. Add weather, events, airport schedules, traffic, and transit-disruption data.
+4. Obtain operational supply inputs before attempting exact fleet allocation or optimization.
+5. Monitor WAPE and bias by time period, borough, zone-volume tier, and holiday status.
+6. Add minimum geographic-service constraints before using the output operationally.
 
-Technical methodology, validation results, limitations, and reproduction steps are documented in `README.md` and `MODEL_CARD.md`.
+## Bottom Line
+
+The project provides a defensible estimate of short-horizon **completed-trip activity** and a transparent method for ranking **relative positioning priorities**. It can support planning discussions about where and when operational attention may be useful. It does not support exact staffing numbers, measurement of unmet demand, or fully optimized fleet allocation.
+
+Technical details are available in the project [README](../README.md) and [Model Card](MODEL_CARD.md).

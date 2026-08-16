@@ -1,305 +1,261 @@
 # Model Card — Holiday-Aware Completed-Trip Forecast
 
-**Project:** Ride-Hailing Demand Forecasting & Demand-Based Positioning<br>
-**Training notebook:** `05_demand_forecasting.ipynb`<br>
-**Downstream notebook:** `06_demand-based_fleet_positioning.ipynb`<br>
-**Status:** Final analytical model for this portfolio project; not production-validated
+| Item | Value |
+|---|---|
+| Project | Ride-Hailing Completed-Trip Forecasting & Demand-Based Positioning |
+| Training notebook | `notebooks/05_demand_forecasting.ipynb` |
+| Downstream notebook | `notebooks/06_demand-based_fleet_positioning.ipynb` |
+| Selected model | Holiday-Aware Historical Baseline |
+| Forecast grain | Pickup zone × hour |
+| Forecast horizon | 1–7 January 2025 |
+| Status | Portfolio analytical model; not production-validated |
 
-## 1. Model overview
+## Model Purpose
 
-| Item                 | Description                                                                     |
-| -------------------- | ------------------------------------------------------------------------------- |
-| Forecasting task     | Predict the number of completed trips for every actionable pickup zone and hour |
-| Selected model       | Holiday-Aware Historical Baseline                                               |
-| Model family         | Historical aggregation/look-up model                                            |
-| Forecast horizon     | 1–7 January 2025                                                                |
-| Forecast granularity | Pickup zone × hour                                                              |
-| Candidate models     | Holiday-Aware Historical Baseline, Linear Regression, and HistGradientBoosting  |
-| Selection criterion  | Lowest validation WAPE                                                          |
-| Primary output       | `forecast_completed_trips`                                                      |
-| Downstream use       | Relative demand-based vehicle-positioning guidance                              |
+The model predicts the number of recorded completed trips for each actionable NYC pickup zone and hour. Its output supports short-horizon activity planning and relative zone-positioning analysis.
 
-The selected model estimates expected completed-trip volume from historical patterns for the same zone, hour, and day of week. Federal holidays use a separate pooled holiday pattern. It outperformed both machine-learning candidates on the November 2024 validation period.
+The model does not estimate all passenger requests, actual driver supply, exact vehicle requirements, or optimal dispatch decisions.
 
-## 2. Intended use
+## Intended Use
 
-The model is intended to:
+Appropriate uses include:
 
-- forecast short-horizon completed-trip activity by pickup zone and hour;
-- identify when and where completed-trip workload is likely to concentrate;
-- provide an input for relative fleet-positioning recommendations; and
-- demonstrate a leakage-aware time-series validation workflow.
+- estimating short-horizon completed-trip activity;
+- comparing expected activity across zones within the same hour;
+- identifying recurring zone, hour, weekday, and holiday patterns;
+- providing an input to relative completed-trip workload shares; and
+- demonstrating chronological forecast evaluation.
 
-The model is **not** intended to:
+Inappropriate uses include:
 
-- estimate all passenger demand, including unfulfilled or cancelled requests;
-- determine the exact number of vehicles or drivers required;
-- perform real-time dispatching, routing, pricing, or driver scheduling; or
-- replace operational judgement during unusual events.
+- treating completed trips as total latent demand;
+- assigning an exact number of drivers or vehicles;
+- automated real-time dispatching or pricing;
+- evaluating individual driver performance; and
+- making high-impact operational decisions without human review.
 
-## 3. Data and analytical scope
+## Training Data
 
-### 3.1 Source data
+The source is the 2024 NYC TLC HVFHS trip dataset after the quality rules in notebooks 02–03.
 
-The project uses 2024 NYC TLC High Volume For-Hire Vehicle trip records and the NYC taxi-zone lookup. After quality filtering, `fact_trip` contains **239,426,737** completed-trip records.
+| Item | Value |
+|---|---:|
+| Clean `fact_trip` rows | 239,426,737 |
+| Completed trips within actionable forecast scope | 239,417,292 |
+| Actionable pickup zones | 262 |
+| Historical hours | 8,784 |
+| Complete zone-hour rows | 2,301,408 |
+| Zero-demand zone-hours | 91,481 |
+| Missing target values | 0 |
 
-The forecasting panel contains:
+The forecast scope excludes LocationID 264, LocationID 265, and EWR. A complete cross join of 8,784 hours and 262 zones ensures that zero-trip zone-hours remain represented.
 
-| Item                      |     Value |
-| ------------------------- | --------: |
-| Actionable pickup zones   |       262 |
-| Hourly timestamps in 2024 |     8,784 |
-| Complete zone-hour rows   | 2,301,408 |
-| Zero-completed-trip rows  |    91,481 |
-| Missing target values     |         0 |
-
-The complete panel explicitly includes zone-hours with zero completed trips. This prevents inactive periods from disappearing during aggregation and gives every time split the same spatial coverage.
-
-### 3.2 Geographic scope
-
-The analysis covers 262 actionable NYC taxi zones. Administrative/unknown zone IDs 264 and 265 and EWR are excluded from operational positioning because they do not represent comparable NYC pickup areas for this use case.
-
-### 3.3 Temporal split
-
-The data is split chronologically rather than randomly.
-
-| Split      | Period            |      Rows | Purpose                                        |
-| ---------- | ----------------- | --------: | ---------------------------------------------- |
-| Train      | 1 Jan–31 Oct 2024 | 1,917,840 | Build candidate models and historical patterns |
-| Validation | 1–30 Nov 2024     |   188,640 | Compare candidates and select the model        |
-| Test       | 1–31 Dec 2024     |   194,928 | Final out-of-sample evaluation                 |
-
-The validation and test periods occur strictly after their corresponding training periods. This better represents a real forecasting workflow and prevents future records from informing earlier predictions.
-
-## 4. Prediction target
-
-The target is:
+## Target
 
 ```text
-completed_trips = number of recorded completed pickups in one zone-hour
+completed_trips = recorded completed pickups in one zone-hour
 ```
 
-This is an **observed completed-trip activity measure**, not a complete measure of latent passenger demand. The dataset does not identify requests that were cancelled, rejected, unfulfilled, or never made because supply was unavailable.
+This target measures observed fulfilled activity. It excludes demand that never became a completed trip, including cancelled, rejected, unmatched, and abandoned requests.
 
-## 5. Holiday-aware historical baseline
+## Temporal Evaluation Design
 
-### 5.1 Regular-day pattern
+| Split | Period | Rows | Purpose |
+|---|---|---:|---|
+| Train | 1 January–31 October 2024 | 1,917,840 | Build baseline and ML candidates |
+| Validation | 1–30 November 2024 | 188,640 | Compare candidates and select the model |
+| Test | 1–31 December 2024 | 194,928 | Final evaluation after selection |
 
-For regular dates, the model calculates the average completed trips for each:
+The split is chronological. For the final test, the selected baseline lookup is rebuilt from train plus validation data. For the January forecast, it is rebuilt from the full 2024 panel.
+
+## Holiday Logic
+
+The notebook uses `USFederalHolidayCalendar` and identifies 11 federal holidays in 2024:
+
+- 8 in train;
+- 2 in validation; and
+- 1 in test.
+
+Regular dates use the average completed trips for:
 
 ```text
 LocationID × hour_of_day × day_of_week
 ```
 
-This represents the recurring weekly and intraday demand pattern of each pickup zone.
-
-### 5.2 Holiday pattern
-
-Federal holiday dates are generated with `USFederalHolidayCalendar`. The 2024 data contains 11 federal holidays distributed as follows:
-
-| Split      | Holiday dates |
-| ---------- | ------------: |
-| Train      |             8 |
-| Validation |             2 |
-| Test       |             1 |
-
-Because only one year of history is available, creating a separate profile for every holiday would be too sparse. Holiday observations are therefore pooled into an average pattern for each:
+Federal holidays use a pooled average for:
 
 ```text
 LocationID × hour_of_day
 ```
 
-If a holiday profile is unavailable for a zone-hour, the model falls back to its regular zone-hour-day-of-week pattern. Predictions are clipped at zero.
+Pooling is used because one year of data provides only one example of most named holidays. If a holiday zone-hour value is unavailable, the regular lookup is used as fallback. Predictions are clipped at zero.
 
-### 5.3 Final forecast lookup
+## Candidate Models
 
-After model selection, the test prediction lookup is rebuilt with train and validation data. After final evaluation, the January 2025 forecast lookup is rebuilt with the full 2024 dataset.
+### Holiday-Aware Historical Baseline
 
-The selected model is consequently represented by reproducible aggregation tables rather than a serialized estimator file.
+An interpretable aggregation model using the regular and pooled-holiday lookups described above.
 
-## 6. Candidate models
+### Linear Regression
 
-### 6.1 Holiday-Aware Historical Baseline
+A linear benchmark trained on historical target aggregates and calendar features. The notebook reports 15,627 negative validation predictions before clipping them to zero.
 
-The baseline uses the holiday or regular historical lookup described above. It is interpretable, computationally efficient, and closely matches the strong repeating zone-hour-weekday structure in the data.
+### HistGradientBoosting
 
-### 6.2 Linear Regression
+The nonlinear benchmark uses:
 
-Linear Regression provides a simple parametric benchmark. It tests whether a weighted linear combination of temporal and historical-demand features improves upon the historical lookup. Negative outputs are clipped to zero.
+| Parameter | Value |
+|---|---:|
+| Estimator | `HistGradientBoostingRegressor` |
+| Loss | Poisson |
+| Maximum iterations | 150 |
+| Learning rate | 0.08 |
+| Maximum leaf nodes | 31 |
+| L2 regularization | 1.0 |
+| Random state | 42 |
 
-### 6.3 HistGradientBoosting
+Poisson loss supports the non-negative count target, while histogram-based boosting is suitable for the large training table.
 
-`HistGradientBoostingRegressor` tests whether nonlinear relationships and feature interactions improve the forecast. Its main configuration is:
+## Machine-Learning Features
 
-| Parameter          |   Value |
-| ------------------ | ------: |
-| Loss               | Poisson |
-| Maximum iterations |     150 |
-| Learning rate      |    0.08 |
-| Maximum leaf nodes |      31 |
-| L2 regularization  |     1.0 |
-| Random state       |      42 |
+The Linear Regression and HistGradientBoosting candidates use ten features:
 
-Poisson loss is appropriate for a non-negative count target. HistGradientBoosting is also more memory-efficient than conventional gradient boosting for the 1.9-million-row training set.
+| Feature | Description |
+|---|---|
+| `zone_avg_trips` | Historical mean for the pickup zone |
+| `zone_hour_avg_trips` | Historical mean for zone and hour |
+| `zone_day_avg_trips` | Historical mean for zone and day of week |
+| `baseline_prediction` | Holiday-aware or regular lookup prediction |
+| `hour_of_day` | Hour from 0 to 23 |
+| `day_of_week` | ISO day number from 1 to 7 |
+| `month` | Calendar month |
+| `is_weekend` | Weekend indicator |
+| `is_holiday` | Federal-holiday indicator |
+| `days_since_start` | Simple time-trend feature |
 
-## 7. Machine-learning features
+Trip distance and duration are not used as demand-forecasting features because future-trip values would not be known at forecast time.
 
-The two machine-learning candidates use:
+## Metrics
 
-| Feature               | Meaning                                         |
-| --------------------- | ----------------------------------------------- |
-| `zone_avg_trips`      | Historical average for the pickup zone          |
-| `zone_hour_avg_trips` | Historical average for the zone and hour        |
-| `zone_day_avg_trips`  | Historical average for the zone and day of week |
-| `baseline_prediction` | Holiday-aware or regular historical prediction  |
-| `hour_of_day`         | Hour from 0 to 23                               |
-| `day_of_week`         | Day number from Monday to Sunday                |
-| `month`               | Calendar month                                  |
-| `is_weekend`          | Weekend indicator                               |
-| `is_holiday`          | Federal-holiday indicator                       |
-| `days_since_start`    | Simple time-trend feature                       |
+| Metric | Interpretation |
+|---|---|
+| WAPE | Total absolute error divided by total actual completed trips; primary selection metric |
+| MAE | Average absolute error per zone-hour |
+| MAPE nonzero | Percentage error calculated only where actual completed trips are greater than zero |
+| Bias | Net overprediction or underprediction relative to actual volume |
 
-Historical features used for validation and test predictions are derived only from earlier splits. Trip distance and trip duration are not used as demand-forecasting features because they are not known for future trips at prediction time.
+Positive bias indicates overall overprediction. Negative bias indicates overall underprediction.
 
-`LocationID` is not treated as a continuous numeric feature. Zone-specific information is represented through historical aggregate features.
+## Validation Results
 
-## 8. Evaluation protocol
+| Model | WAPE | MAE | MAPE nonzero | Bias |
+|---|---:|---:|---:|---:|
+| **Holiday-Aware Historical Baseline** | **15.29%** | **16.19** | **24.14%** | **-1.71%** |
+| HistGradientBoosting | 16.61% | 17.59 | 27.76% | 4.15% |
+| Linear Regression | 18.37% | 19.46 | 28.42% | -4.43% |
 
-### 8.1 Model selection
+The Holiday-Aware Historical Baseline is selected because it has the lowest validation WAPE. The more complex candidates do not improve performance on the held-out validation month.
 
-All candidates are compared on November 2024 validation data. The candidate with the lowest WAPE is selected. December 2024 remains untouched until selection is complete.
+## Final Test Results
 
-### 8.2 Metrics
+| Model | WAPE | MAE | MAPE nonzero | Bias |
+|---|---:|---:|---:|---:|
+| Holiday-Aware Historical Baseline | **19.61%** | **21.19** | **27.55%** | **-4.99%** |
 
-| Metric       | Purpose                                                                |
-| ------------ | ---------------------------------------------------------------------- |
-| WAPE         | Primary metric; total absolute error relative to total actual volume   |
-| MAE          | Average absolute error in completed trips per zone-hour                |
-| MAPE nonzero | Average percentage error only where actual demand is greater than zero |
-| Bias         | Direction and size of systematic over- or underprediction              |
+### Test performance by volume tier
 
-Positive bias means overall overprediction; negative bias means overall underprediction. MAPE excludes zero targets to avoid division by zero and unstable percentages.
+| Volume tier | WAPE | MAE | Bias |
+|---|---:|---:|---:|
+| Low | 22.98% | 5.62 | -8.52% |
+| Medium | 17.73% | 15.65 | -7.66% |
+| High | 20.00% | 42.49 | -3.47% |
 
-## 9. Model results
+Low-volume zones have the highest relative error despite their lower absolute MAE. High-volume zones have higher absolute error because each zone-hour contains more completed trips.
 
-### 9.1 Validation performance
+December performance is weaker than November performance. The saved daily error table shows especially large errors around the year-end period, including 24–31 December. This indicates that one year of recurring patterns does not fully capture unusual year-end behavior.
 
-| Model                                 |  WAPE (%) |       MAE | MAPE nonzero (%) |  Bias (%) |
-| ------------------------------------- | --------: | --------: | ---------------: | --------: |
-| **Holiday-Aware Historical Baseline** | **15.29** | **16.19** |        **24.14** | **-1.71** |
-| HistGradientBoosting                  |     16.61 |     17.59 |            27.76 |      4.15 |
-| Linear Regression                     |     18.37 |     19.46 |            28.42 |     -4.43 |
+## Forecast Output
 
-The historical baseline is selected because it achieves the lowest validation WAPE and MAE. The result shows that greater model complexity does not automatically improve forecast quality when the dominant patterns are strongly seasonal and repeatable.
-
-### 9.2 Final test performance
-
-| Model                             | WAPE (%) |   MAE | MAPE nonzero (%) | Bias (%) |
-| --------------------------------- | -------: | ----: | ---------------: | -------: |
-| Holiday-Aware Historical Baseline |    19.61 | 21.19 |            27.55 |    -4.99 |
-
-Performance is weaker in December than in November, and the negative bias indicates overall underprediction. The difference is consistent with year-end behavior being harder to represent using only one year of pooled historical patterns.
-
-### 9.3 Test performance by demand-volume tier
-
-| Volume tier | WAPE (%) |   MAE | Bias (%) |
-| ----------- | -------: | ----: | -------: |
-| Low         |    22.98 |  5.62 |    -8.52 |
-| Medium      |    17.73 | 15.65 |    -7.66 |
-| High        |    20.00 | 42.49 |    -3.47 |
-
-Low-volume zones have the highest relative error and underprediction bias. High-volume zones have a larger absolute error because each zone-hour contains more trips. These tier results are passed to the positioning stage as forecast-reliability information.
-
-## 10. Forecast output
-
-The final model produces forecasts for 1–7 January 2025.
-
-| Check                     | Result |
-| ------------------------- | -----: |
-| Forecast hours            |    168 |
-| Zones per hour            |    262 |
-| Forecast rows             | 44,016 |
-| Missing predictions       |      0 |
-| Negative predictions      |      0 |
-| Holiday rows on 1 January |  6,288 |
-
-New Year's Day uses the pooled federal-holiday profile. Other dates use their regular zone-hour-day-of-week patterns.
-
-## 11. Downstream positioning logic
-
-Notebook 06 converts predicted completed trips into a **completed-trip workload proxy**:
+The selected model generates 44,016 predictions for 1–7 January 2025:
 
 ```text
-forecast completed-trip hours
-= forecast completed trips × historical average trip duration
+168 hours × 262 zones = 44,016 rows
 ```
 
-Average duration uses a transparent fallback hierarchy:
+The saved notebook output reports:
 
-1. zone-hour-day-of-week historical duration;
-2. zone-hour historical duration;
-3. zone historical duration; and
-4. global historical duration.
+| Check | Result |
+|---|---:|
+| Unique forecast hours | 168 |
+| Unique zones | 262 |
+| Missing predictions | 0 |
+| Negative predictions | 0 |
+| Duplicate zone-hour rows | 0 |
+| New Year's Day rows | 6,288 |
+| Models in `forecast_output` | 1 |
 
-Within each forecast hour, each zone receives a relative positioning share:
+New Year's Day is recognized in notebook 05 and uses the pooled holiday forecast pattern.
 
-```text
-zone forecast completed-trip hours / total forecast completed-trip hours
-```
+## Downstream Positioning Use
 
-Zones are then labelled High, Medium, or Standard priority from cumulative positioning share. Reliability flags combine forecast-volume-tier error, duration-source specificity, and holiday status.
+Notebook 06 multiplies forecasted completed trips by historical average duration to estimate completed-trip workload hours. Duration uses this fallback order:
 
-Despite the legacy DuckDB table name `fleet_allocation_recommendation`, the output is **relative demand-based positioning guidance**, not an estimate of actual fleet capacity or an optimized allocation of a known number of vehicles.
+1. zone-hour-day;
+2. zone-hour;
+3. zone; and
+4. global average.
 
-## 12. Limitations
+Each zone's workload is divided by total workload within the same hour to obtain `recommended_positioning_share_pct`. The shares sum to 100% across all 262 zones for every saved hour.
 
-1. **Completed trips are not total demand.** Unfulfilled, rejected, and cancelled requests are not represented.
-2. **Only one year of training history is available.** Long-term trends and year-over-year holiday effects cannot be estimated reliably.
-3. **Federal holidays are pooled.** New Year's Day, Thanksgiving, and other holidays may have different spatial and hourly patterns.
-4. **No external event features are included.** Weather, concerts, sports events, transit disruption, promotions, pricing, and airport schedules may affect demand.
-5. **No supply information is available.** The dataset has no active-driver counts, available driver-hours, vehicles by zone, repositioning time or cost, or operational supply constraints.
-6. **Historical averages adapt slowly to abrupt change.** Structural breaks or unusual events can make prior patterns unreliable.
-7. **Sparse and low-volume zones have higher relative uncertainty.** Their recommendations should be treated more cautiously.
-8. **The holiday calendar is federal only.** Local observances and non-federal events are not captured.
-9. **The ML benchmarks rely on historical target aggregates.** Their production implementation must recreate these features strictly from data available before forecast time.
+The downstream review flag combines forecast-volume-tier performance, duration fallback, and holiday status. `is_holiday`, `holiday_name`, and `calendar_reliability` are retained in the final positioning output. Holiday rows are marked `Use with caution`, unless a global duration fallback requires manual review.
 
-## 13. Responsible use and misuse risks
+## Verification Scope
 
-Repeatedly prioritizing only high-volume zones may reduce attention to lower-volume communities. Forecast volume should therefore not be the sole basis for service availability decisions.
+Notebook 05 displays checks for panel size, preserved trip totals, split coverage, missing features, missing/negative predictions, holiday rows, duplicate keys, and saved-table counts. The saved outputs show the expected values.
 
-The output should be used with human review, especially for:
+These are notebook-level diagnostic checks, not a formal automated testing framework. The variable `forecast_validation_passed` is calculated but not printed or enforced, and the final saved-table query is displayed without a final `assert`, `raise`, or literal `PASSED` message.
 
-- federal holidays and unusual events;
-- low-volume zones;
-- rows using broader duration fallbacks;
-- periods showing distribution drift; and
-- decisions that affect driver welfare or geographic service equity.
+The latest saved notebook has no error outputs, but a fresh-kernel run from top to bottom is recommended before making a stronger reproducibility claim.
 
-Do not interpret positioning shares as mandatory driver assignments or proof of insufficient supply.
+## Limitations
 
-## 14. Reproducibility
+1. **Completed trips are not total demand.** Unfulfilled and cancelled requests are not represented.
+2. **Only one year of history is available.** Year-over-year seasonality and named-holiday effects cannot be estimated.
+3. **Holiday observations are pooled.** Different federal holidays can have materially different patterns.
+4. **External drivers are absent.** Weather, events, pricing, promotions, traffic, airport schedules, and transit disruption are not modeled.
+5. **Supply data is absent.** Active drivers, available driver-hours, vehicles per zone, repositioning time/cost, and fleet constraints are unavailable.
+6. **Historical aggregation adapts slowly.** Sudden structural changes or unusual events can invalidate recurring patterns.
+7. **Low-volume zones are relatively uncertain.** Small absolute errors can produce large percentage errors.
+8. **Predictions are not calibrated uncertainty intervals.** The pipeline provides point predictions and empirical error metrics, not probabilistic prediction intervals.
+9. **Holiday reliability remains limited.** The review flag identifies holidays, but it cannot compensate for having only pooled one-year holiday history.
+10. **No automated production monitoring exists.** Model drift and forecast degradation are not tracked after the notebook run.
 
-The workflow is reproducible through `05_demand_forecasting.ipynb` using the cleaned DuckDB tables constructed in notebooks 01–03. Key controls include:
+## Responsible Use
 
-- chronological train, validation, and test splits;
-- complete zone-hour panels including zeros;
-- explicit federal-holiday generation;
-- fixed `random_state=42` for HistGradientBoosting;
-- validation-based model selection; and
-- row-count, missing-value, negative-prediction, and total-demand checks.
+Positioning priorities should not be the sole basis for reducing service in lower-volume communities. Human reviewers should consider geographic service coverage, fairness, safety, live events, and current supply conditions.
 
-The selected forecast is stored in DuckDB table `forecast_output` and consumed by notebook 06.
+Do not interpret the model as evidence of individual driver productivity or as proof that a zone has sufficient or insufficient supply.
 
-## 15. Recommended monitoring
+## Reproducibility
 
-If the workflow is extended beyond this portfolio analysis, monitor:
+The selected model is stored as reproducible historical lookup tables and forecast outputs rather than as a serialized estimator artifact. Reproduction requires:
+
+- the verified 2024 source files;
+- notebooks 01–05 executed in order;
+- the DuckDB warehouse;
+- the package versions in `requirements.txt`; and
+- a clean-kernel rerun for final release verification.
+
+The main saved tables are `forecast_output`, `forecast_model_evaluation`, and `forecast_test_tier_evaluation`.
+
+## Monitoring Recommendations
+
+If this prototype is extended, monitor:
 
 - WAPE, MAE, and bias by week;
-- performance by volume tier and borough;
 - holiday versus non-holiday error;
-- zero-demand prediction behavior;
-- changes in zone-level demand distribution;
-- missing or unseen zones and time periods; and
-- the proportion of positioning rows requiring caution or manual review.
-
-Retraining or redesign should be considered when error or bias rises consistently, geographic demand patterns shift, or additional years and operational supply data become available.
+- error by borough and volume tier;
+- the share of zero-demand zone-hours;
+- changes in zone-level activity distributions;
+- missing zones or forecast keys; and
+- the proportion of downstream rows using fallback duration estimates.
