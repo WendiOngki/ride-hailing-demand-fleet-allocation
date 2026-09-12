@@ -12,6 +12,10 @@ outputs/
 *.wal
 *.part
 
+# Keep the compact database required by the dashboard
+!data/dashboard/
+!data/dashboard/ride_hailing_dashboard.duckdb
+
 # Jupyter temporary files
 .ipynb_checkpoints/
 notebooks/iframe_figures/

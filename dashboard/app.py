@@ -13,7 +13,7 @@ import streamlit as st
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DB_PATH = PROJECT_ROOT / 'data' / 'processed' / 'nyc_taxi.db'
+DB_PATH = (PROJECT_ROOT / 'data' / 'dashboard' / 'ride_hailing_dashboard.duckdb')
 
 st.set_page_config(
     page_title='Ride-Hailing Forecasting & Positioning',
@@ -30,24 +30,16 @@ def get_connection():
 @st.cache_data(show_spinner=False)
 def load_historical_summary():
     return get_connection().execute("""
-        SELECT
-            COUNT(*) AS completed_trips,
-            COUNT(DISTINCT CAST(pickup_datetime AS DATE)) AS number_of_days,
-            COUNT(DISTINCT PULocationID) AS pickup_zones,
-            MIN(pickup_datetime) AS min_pickup,
-            MAX(pickup_datetime) AS max_pickup
-        FROM fact_trip
+        SELECT *
+        FROM historical_summary
     """).df()
 
 
 @st.cache_data(show_spinner=False)
 def load_daily_trend():
     return get_connection().execute("""
-        SELECT
-            CAST(pickup_datetime AS DATE) AS demand_date,
-            COUNT(*) AS completed_trips
-        FROM fact_trip
-        GROUP BY demand_date
+        SELECT *
+        FROM daily_trend
         ORDER BY demand_date
     """).df()
 
@@ -55,17 +47,8 @@ def load_daily_trend():
 @st.cache_data(show_spinner=False)
 def load_weekday_weekend():
     return get_connection().execute("""
-        SELECT
-            CASE
-                WHEN ISODOW(pickup_datetime) IN (6, 7) THEN 'Weekend'
-                ELSE 'Weekday'
-            END AS day_type,
-            COUNT(DISTINCT CAST(pickup_datetime AS DATE)) AS number_of_days,
-            COUNT(*) * 1.0
-                / COUNT(DISTINCT CAST(pickup_datetime AS DATE))
-                AS avg_completed_trips
-        FROM fact_trip
-        GROUP BY day_type
+        SELECT *
+        FROM weekday_weekend
         ORDER BY day_type
     """).df()
 
@@ -73,14 +56,8 @@ def load_weekday_weekend():
 @st.cache_data(show_spinner=False)
 def load_hourly_heatmap():
     return get_connection().execute("""
-        SELECT
-            ISODOW(pickup_datetime) AS day_of_week,
-            EXTRACT(HOUR FROM pickup_datetime)::INTEGER AS hour_of_day,
-            COUNT(*) * 1.0
-                / COUNT(DISTINCT CAST(pickup_datetime AS DATE))
-                AS avg_completed_trips
-        FROM fact_trip
-        GROUP BY day_of_week, hour_of_day
+        SELECT *
+        FROM hourly_heatmap
         ORDER BY day_of_week, hour_of_day
     """).df()
 
@@ -119,7 +96,7 @@ def load_forecast():
 def load_positioning():
     return get_connection().execute("""
         SELECT *
-        FROM fleet_allocation_recommendation
+        FROM positioning_recommendation
         ORDER BY forecast_time, positioning_rank
     """).df()
 
@@ -138,7 +115,7 @@ page = st.sidebar.radio(
         'Project Overview',
         'Historical Patterns',
         'Model Evaluation',
-        '7-Day Forecast',
+        'January 2025 Forecast Scenario',
         'Positioning Guidance'
     ]
 )
@@ -150,8 +127,11 @@ st.sidebar.caption(
 )
 
 if not DB_PATH.exists():
-    st.error(f'Database not found: {DB_PATH}')
-    st.info('Run notebooks 01–06 before starting the dashboard.')
+    st.error('Dashboard database was not found.')
+    st.info(
+        'Run notebook 06 to generate '
+        '`data/dashboard/ride_hailing_dashboard.duckdb`.'
+    )
     st.stop()
 
 
@@ -327,11 +307,13 @@ elif page == 'Model Evaluation':
     )
 
 
-elif page == '7-Day Forecast':
-    st.title('Completed-Trip Forecast: 1–7 January 2025')
+elif page == 'January 2025 Forecast Scenario':
+    st.title('Completed-Trip Forecast Scenario: 1–7 January 2025')
+             
     st.caption(
-        'Holiday-Aware Historical Baseline forecast for 262 actionable '
-        'pickup zones and 168 consecutive hours.'
+    'Out-of-time forecasting scenario generated from the complete '
+    '2024 dataset. This is a historical portfolio demonstration, '
+    'not a current real-time forecast.'
     )
 
     forecast = load_forecast()
