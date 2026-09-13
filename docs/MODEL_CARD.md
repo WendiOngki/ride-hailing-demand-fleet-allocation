@@ -7,7 +7,7 @@
 | Downstream notebook | `notebooks/06_demand-based_fleet_positioning.ipynb` |
 | Selected model | Holiday-Aware Historical Baseline |
 | Forecast grain | Pickup zone × hour |
-| Forecast horizon | 1–7 January 2025 |
+| Historical forecast scenario  | 1–7 January 2025 |
 | Status | Portfolio analytical model; not production-validated |
 
 ## Model Purpose
@@ -178,6 +178,8 @@ December performance is weaker than November performance. The saved daily error 
 
 The selected model generates 44,016 predictions for 1–7 January 2025:
 
+This January 2025 output is an out-of-time historical portfolio demonstration rather than a current or real-time forecast.
+
 ```text
 168 hours × 262 zones = 44,016 rows
 ```
@@ -235,6 +237,14 @@ The latest saved notebook has no error outputs, but a fresh-kernel run from top 
 Positioning priorities should not be the sole basis for reducing service in lower-volume communities. Human reviewers should consider geographic service coverage, fairness, safety, live events, and current supply conditions.
 
 Do not interpret the model as evidence of individual driver productivity or as proof that a zone has sufficient or insufficient supply.
+
+## Deployment Artifact
+
+The Streamlit dashboard uses the compact aggregate-only database stored at:
+
+```text
+data/dashboard/ride_hailing_dashboard.duckdb
+```
 
 ## Reproducibility
 

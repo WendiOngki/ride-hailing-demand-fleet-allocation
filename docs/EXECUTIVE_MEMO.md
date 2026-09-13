@@ -1,16 +1,16 @@
-# Executive Memo — Ride-Hailing Completed-Trip Forecasting & Positioning
+# Executive Memo — NYC Ride-Hailing Demand Forecasting & Demand-Based Fleet Positioning
 
-| | |
-|---|---|
-| To | Operations Leadership |
-| From | Analytics Team |
-| Historical period | January–December 2024 |
-| Forecast period | 1–7 January 2025 |
-| Subject | Completed-trip patterns, forecast performance, and relative positioning guidance |
+|                              |                                                                                  |
+| ---------------------------- | -------------------------------------------------------------------------------- |
+| To                           | Operations Leadership                                                            |
+| From                         | Analytics Team                                                                   |
+| Historical period            | January–December 2024                                                            |
+| Historical forecast scenario | 1–7 January 2025                                                                 |
+| Subject                      | Completed-trip patterns, forecast performance, and relative positioning guidance |
 
 ## Decision Summary
 
-Use the project output as an **hourly relative positioning signal**. It identifies which pickup zones account for larger shares of forecasted completed-trip workload within the same hour.
+Use the analytical output as an **hourly relative positioning signal**. It identifies which pickup zones account for larger shares of forecasted completed-trip workload within the same hour.
 
 Do not treat the output as an exact vehicle requirement. The public data does not contain active-driver counts, available driver-hours, vehicles by zone, repositioning time/cost, or operational supply constraints.
 
@@ -31,11 +31,11 @@ These findings show strong recurring geographic, hourly, and weekday patterns, b
 
 Three models were compared on November 2024 validation data:
 
-| Candidate | Validation WAPE | Validation bias |
-|---|---:|---:|
-| **Holiday-Aware Historical Baseline** | **15.29%** | **-1.71%** |
-| HistGradientBoosting | 16.61% | 4.15% |
-| Linear Regression | 18.37% | -4.43% |
+| Candidate                             | Validation WAPE | Validation bias |
+| ------------------------------------- | --------------: | --------------: |
+| **Holiday-Aware Historical Baseline** |      **15.29%** |      **-1.71%** |
+| HistGradientBoosting                  |          16.61% |           4.15% |
+| Linear Regression                     |          18.37% |          -4.43% |
 
 The Holiday-Aware Historical Baseline was selected because it produced the lowest validation WAPE. It uses recurring zone-hour-weekday patterns for regular dates and a pooled zone-hour pattern for US federal holidays.
 
@@ -45,11 +45,11 @@ On the untouched December test period, the selected model achieved:
 - **MAE:** 21.19 completed trips per zone-hour; and
 - **bias:** -4.99%, indicating overall underprediction.
 
-December errors were higher than November errors, particularly around the end-of-year period. The forecast should therefore be treated as a planning estimate rather than an exact future count.
+December errors were higher than November errors, particularly around the end-of-year period. The saved January 2025 output should therefore be interpreted as an out-of-time historical forecast scenario and planning demonstration rather than a current or real-time forecast.
 
 ## Positioning Guidance
 
-The final forecast contains **44,016 rows** covering 168 hours and 262 zones from 1–7 January 2025. New Year's Day uses the pooled holiday forecasting pattern.
+The historical forecast scenario contains **44,016 rows** covering 168 hours and 262 zones from 1–7 January 2025.
 
 For each zone-hour, notebook 06:
 
@@ -63,11 +63,11 @@ Every forecast hour contains 262 zones, and the relative positioning shares sum 
 
 Across the complete seven-day output:
 
-| Review flag | Rows | Share |
-|---|---:|---:|
-| Standard use | 25,056 | 56.92% |
-| Use with caution | 18,624 | 42.31% |
-| Manual review recommended | 336 | 0.76% |
+| Review flag               |   Rows |  Share |
+| ------------------------- | -----: | -----: |
+| Standard use              | 25,056 | 56.92% |
+| Use with caution          | 18,624 | 42.31% |
+| Manual review recommended |    336 |  0.76% |
 
 The review flags reflect forecast-volume-tier reliability, the specificity of the historical-duration estimate, and holiday status. New Year's Day is marked for cautious use because the holiday-aware model still relies on limited pooled holiday history.
 
@@ -99,6 +99,6 @@ The review flags reflect forecast-volume-tier reliability, the specificity of th
 
 ## Bottom Line
 
-The project provides a defensible estimate of short-horizon **completed-trip activity** and a transparent method for ranking **relative positioning priorities**. It can support planning discussions about where and when operational attention may be useful. It does not support exact staffing numbers, measurement of unmet demand, or fully optimized fleet allocation.
+The analysis provides a defensible estimate of short-horizon **completed-trip activity** and a transparent method for ranking **relative positioning priorities**. It can support planning discussions about where and when operational attention may be useful. It does not support exact staffing numbers, measurement of unmet demand, or fully optimized fleet allocation.
 
-Technical details are available in the project [README](../README.md) and [Model Card](MODEL_CARD.md).
+Technical details are available in the [README](../README.md) and [Model Card](MODEL_CARD.md).
