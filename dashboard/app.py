@@ -1,6 +1,6 @@
-"""Streamlit dashboard for the ride-hailing analytics project.
+"""Streamlit dashboard for the NYC ride-hailing forecasting and positioning analysis.
 
-Run from the project root:
+Run from the repository root:
     streamlit run dashboard/app.py
 """
 
@@ -112,7 +112,7 @@ st.sidebar.title('Ride-Hailing Analytics')
 page = st.sidebar.radio(
     'Navigation',
     [
-        'Project Overview',
+        'Analysis Overview',
         'Historical Patterns',
         'Model Evaluation',
         'January 2025 Forecast Scenario',
@@ -135,14 +135,14 @@ if not DB_PATH.exists():
     st.stop()
 
 
-if page == 'Project Overview':
-    st.title('Ride-Hailing Forecasting & Demand-Based Positioning')
+if page == 'Analysis Overview':
+    st.title('NYC Ride-Hailing Demand Forecasting & Demand-Based Fleet Positioning')
     st.caption(
         'Historical completed-trip analysis, holiday-aware forecasting, '
         'and relative pickup-zone positioning guidance.'
     )
 
-    with st.spinner('Loading project summary...'):
+    with st.spinner('Loading analysis summary...'):
         summary = load_historical_summary().iloc[0]
         forecast = load_forecast()
         positioning = load_positioning()
@@ -309,11 +309,11 @@ elif page == 'Model Evaluation':
 
 elif page == 'January 2025 Forecast Scenario':
     st.title('Completed-Trip Forecast Scenario: 1–7 January 2025')
-             
+
     st.caption(
-    'Out-of-time forecasting scenario generated from the complete '
-    '2024 dataset. This is a historical portfolio demonstration, '
-    'not a current real-time forecast.'
+        'Out-of-time forecast scenario generated from the complete '
+        '2024 dataset. This is a historical portfolio demonstration, '
+        'not a current, real-time forecast.'
     )
 
     forecast = load_forecast()
@@ -521,7 +521,7 @@ elif page == 'Positioning Guidance':
     )
 
     st.warning(
-        'Use these shares as directional planning evidence only. The project '
-        'does not observe active drivers, available vehicles, repositioning '
-        'time, repositioning cost, or unmet passenger requests.'
+    'Use these shares as directional planning evidence only. The analysis '
+    'does not observe active drivers, available vehicles, repositioning '
+    'time, repositioning cost, or unmet passenger requests.'
     )
